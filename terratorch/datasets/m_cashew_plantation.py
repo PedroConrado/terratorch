@@ -70,6 +70,26 @@ class MBeninSmallHolderCashewsNonGeo(NonGeoDataset):
 
         self.image_files = [self.data_directory / (filename + ".hdf5") for filename in partitions[split]]
 
+    def _get_date(self, keys) -> np.ndarray:
+        date_pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
+        date = None
+
+        for key in keys:
+            match = date_pattern.search(key)
+            if match:
+                date = match.group()
+                break
+
+        if date:
+            date = pd.to_datetime(date)
+            date_np = np.zeros((1, 2), dtype=np.float32)
+            date_np[0, 0] = date.year
+            date_np[0, 1] = date.dayofyear - 1
+        else:
+            date_np = np.zeros((1, 2))
+
+        return torch.tensor(date_np, dtype=torch.float32)
+
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         file_path = self.image_files[index]
 
@@ -79,32 +99,16 @@ class MBeninSmallHolderCashewsNonGeo(NonGeoDataset):
             bands = [np.array(h5file[key]) for key in keys]
 
             image = np.stack(bands, axis=-1)
-            date = self._get_date(h5file)
+            timestamp = self._get_date(h5file)
             mask = np.array(h5file["label"])
 
-        output = {"image": image.astype(np.float32), "date": date, "mask": mask}
+        output = {"image": image.astype(np.float32), "mask": mask}
 
         output = self.transform(**output)
         output["mask"] = output["mask"].long()
+        output["temporal_coords"] = timestamp
 
         return output
-
-    def _get_date(self, file) -> np.ndarray:
-        date = None
-        date_pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-        for key in file.keys():
-            match = date_pattern.search(key)
-            if match:
-                date = match.group()
-                break
-
-        date = pd.to_datetime(date)
-        date_np = np.zeros((1, 3))
-        date_np[0, 0] = date.year
-        date_np[0, 1] = date.dayofyear - 1
-        date_np[0, 2] = date.hour
-        return date_np
 
     def _validate_bands(self, bands: Sequence[str]) -> None:
         assert isinstance(bands, Sequence), "'bands' must be a sequence"

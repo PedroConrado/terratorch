@@ -2,6 +2,7 @@ import ast
 import json
 import pickle
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import albumentations as A
@@ -27,7 +28,7 @@ class MForestNetNonGeo(NonGeoDataset):
 
     rgb_bands = ("RED", "GREEN", "BLUE")
 
-    BAND_SETS = {"all": all_band_names, "rgb": rgb_bands}
+    BAND_SETS = {"all": all_band_names, "rgb": rgb_bands}  # noqa: RUF012
 
     def __init__(
         self,
@@ -53,13 +54,35 @@ class MForestNetNonGeo(NonGeoDataset):
         self.data_directory = data_root / "m-forestnet"
 
         partition_file = self.data_directory / f"{partition}_partition.json"
-        with open(partition_file, "r") as file:
+        with open(partition_file) as file:
             partitions = json.load(file)
 
         if split not in partitions:
-            raise ValueError(f"Split '{split}' not found.")
+            msg = f"Split '{split}' not found."
+            raise ValueError(msg)
 
         self.image_files = [self.data_directory / (filename + ".hdf5") for filename in partitions[split]]
+
+    def _get_coords(self, image_id: str) -> torch.Tensor:
+        lat_str, lon_str, _ = image_id.split("_", 2)
+        latitude = float(lat_str)
+        longitude = float(lon_str)
+
+        location_coords = torch.tensor([latitude, longitude], dtype=torch.float32)  # (2,)
+        return location_coords
+
+    def _get_date(self, image_id: str) -> torch.Tensor:
+        try:
+            _, _, date_str = image_id.split("_", 2)
+            date = datetime.strptime(date_str, "%Y_%m_%d")  # noqa: DTZ007
+        except ValueError:
+            date = datetime.strptime("1998-10-13", "%Y-%m-%d")  # noqa: DTZ007
+
+        year = date.year
+        day_of_year = date.timetuple().tm_yday
+
+        temporal_coords = torch.tensor([year, day_of_year], dtype=torch.float32).reshape(1, 2)
+        return temporal_coords
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         file_path = self.image_files[index]
@@ -71,7 +94,7 @@ class MForestNetNonGeo(NonGeoDataset):
             bands = [np.array(h5file[key]) for key in keys]
 
             image = np.stack(bands, axis=-1)
-            attr_dict = pickle.loads(ast.literal_eval(h5file.attrs["pickle"]))
+            attr_dict = pickle.loads(ast.literal_eval(h5file.attrs["pickle"]))  # noqa: S301
             class_index = attr_dict["label"]
 
         output = {"image": image.astype(np.float32)}
@@ -80,13 +103,20 @@ class MForestNetNonGeo(NonGeoDataset):
 
         output["label"] = class_index
 
+        timestamp = self._get_date(image_id)
+        location_coords = self._get_coords(image_id)
+
+        output["temporal_coords"] = timestamp
+        output["location_coords"] = location_coords
+
         return output
 
     def _validate_bands(self, bands: Sequence[str]) -> None:
         assert isinstance(bands, Sequence), "'bands' must be a sequence"
         for band in bands:
             if band not in self.all_band_names:
-                raise ValueError(f"'{band}' is an invalid band name.")
+                msg = f"'{band}' is an invalid band name."
+                raise ValueError(msg)
 
     def __len__(self):
         return len(self.image_files)
@@ -97,7 +127,8 @@ class MForestNetNonGeo(NonGeoDataset):
         elif isinstance(arg, dict):
             sample = arg
         else:
-            raise TypeError("Argument must be an integer index or a sample dictionary.")
+            msg = "Argument must be an integer index or a sample dictionary."
+            raise TypeError(msg)
 
         image = sample["image"].numpy()
         label_index = sample["label"].numpy()
@@ -107,7 +138,8 @@ class MForestNetNonGeo(NonGeoDataset):
             if band in self.bands:
                 rgb_indices.append(self.bands.index(band))
             else:
-                raise ValueError("Dataset doesn't contain some of the RGB bands")
+                msg = "Dataset doesn't contain some of the RGB bands"
+                raise ValueError(msg)
 
         rgb_image = image[rgb_indices, :, :]
         rgb_image = np.transpose(rgb_image, (1, 2, 0))

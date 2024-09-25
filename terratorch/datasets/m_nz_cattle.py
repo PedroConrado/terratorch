@@ -1,5 +1,7 @@
 import json
+import re
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import albumentations as A
@@ -47,7 +49,7 @@ class MNzCattleNonGeo(NonGeoDataset):
         self.data_directory = data_root / "m-nz-cattle"
 
         partition_file = self.data_directory / f"{partition}_partition.json"
-        with open(partition_file, "r") as file:
+        with open(partition_file) as file:
             partitions = json.load(file)
 
         if split not in partitions:
@@ -55,16 +57,40 @@ class MNzCattleNonGeo(NonGeoDataset):
 
         self.image_files = [self.data_directory / (filename + ".hdf5") for filename in partitions[split]]
 
+    def _get_coords(self, file_name: str) -> torch.Tensor:
+
+        coords_str = re.search(r"_(\-?\d+\.\d+),(\-?\d+\.\d+)", file_name).groups()
+        longitude, latitude = map(float, coords_str)
+
+        location_coords = torch.tensor([latitude, longitude], dtype=torch.float32)
+        return location_coords
+
+    def _get_date(self, band_name: str) -> torch.Tensor:
+        date_str = band_name.split("_")[-1]
+        date = datetime.strptime(date_str, "%Y-%m-%d")  # noqa: DTZ007
+
+        year = date.year
+        day_of_year = date.timetuple().tm_yday
+
+        temporal_coords = torch.tensor([year, day_of_year], dtype=torch.float32).reshape(1, 2)
+        return temporal_coords
+
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         file_path = self.image_files[index]
+        file_name = file_path.stem
 
         with h5py.File(file_path, "r") as h5file:
             bands = []
+            date_extracted = False
+
             for key in sorted(h5file.keys()):
                 if "label" in key:
                     mask = np.array(h5file[key])
                 else:
                     bands.append(np.array(h5file[key]))
+                    if not date_extracted:
+                        temporal_coords = self._get_date(key)
+                        date_extracted = True
 
             image = np.stack(bands, axis=-1)
 
@@ -72,6 +98,9 @@ class MNzCattleNonGeo(NonGeoDataset):
 
         output = self.transform(**output)
         output["mask"] = output["mask"].long()
+        location_coords = self._get_coords(file_name)
+        output["location_coords"] = location_coords
+        output["temporal_coords"] = temporal_coords
 
         return output
 
