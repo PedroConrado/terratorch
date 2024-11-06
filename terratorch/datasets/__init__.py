@@ -28,7 +28,6 @@ from terratorch.datasets.m_so2sat import MSo2SatNonGeo
 from terratorch.datasets.open_sentinel_map import OpenSentinelMap
 from terratorch.datasets.pastis import PASTIS
 from terratorch.datasets.sen4agrinet import Sen4AgriNet
-
 # GenericNonGeoRegressionDataset,
 from terratorch.datasets.sen1floods11 import Sen1Floods11NonGeo
 from terratorch.datasets.utils import HLSBands
@@ -39,6 +38,7 @@ from terratorch.datasets.wsf import WSF2019, WSFEvolution
 
 # miscellaneous datasets
 from terratorch.datasets.openearthmap import OpenEarthMapNonGeo
+from terratorch.datasets.burn_intensity import BurnIntensityNonGeo
 
 # Generic Classification Dataset
 from terratorch.datasets.sen4map import Sen4MapDatasetMonthlyComposites
@@ -49,6 +49,7 @@ __all__ = (
     "GenericNonGeoPixelwiseRegressionDataset",
     "GenericNonGeoClassificationDataset",
     "GenericNonGeoRegressionDataset",
+    "BurnIntensityNonGeo",
     "FireScarsNonGeo",
     "FireScarsHLS",
     "FireScarsSegmentationMask",

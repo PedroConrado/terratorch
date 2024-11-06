@@ -35,7 +35,7 @@ from terratorch.datamodules.torchgeo_data_module import TorchGeoDataModule, Torc
 
 # miscellaneous datamodules
 from terratorch.datamodules.openearthmap import OpenEarthMapNonGeoDataModule
-
+from terratorch.datamodules.burn_intensity import BurnIntensityNonGeoDataModule
 # Generic classification datamodule
 from terratorch.datamodules.sen4map import Sen4MapLucasDataModule
 
@@ -45,6 +45,7 @@ __all__ = (
     "GenericNonGeoSegmentationDataModule",
     "GenericNonGeoClassificationDataModule",
     # "GenericNonGeoRegressionDataModule",
+    "BurnIntensityNonGeoDataModule",
     "Sen1Floods11NonGeoDataModule",
     "Sen4MapLucasDataModule",
     "FireScarsNonGeoDataModule",
