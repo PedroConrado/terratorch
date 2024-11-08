@@ -39,6 +39,7 @@ from terratorch.datasets.wsf import WSF2019, WSFEvolution
 # miscellaneous datasets
 from terratorch.datasets.openearthmap import OpenEarthMapNonGeo
 from terratorch.datasets.burn_intensity import BurnIntensityNonGeo
+from terratorch.datasets.landslide4sense import Landslide4SenseNonGeo
 
 # Generic Classification Dataset
 from terratorch.datasets.sen4map import Sen4MapDatasetMonthlyComposites
@@ -50,6 +51,7 @@ __all__ = (
     "GenericNonGeoClassificationDataset",
     "GenericNonGeoRegressionDataset",
     "BurnIntensityNonGeo",
+    "Landslide4SenseNonGeo",
     "FireScarsNonGeo",
     "FireScarsHLS",
     "FireScarsSegmentationMask",

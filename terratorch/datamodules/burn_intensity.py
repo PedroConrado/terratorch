@@ -49,7 +49,7 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
 
         means = [MEANS[b] for b in bands]
         stds = [STDS[b] for b in bands]
-
+        self.bands = bands
         self.train_transform = wrap_in_compose_is_list(train_transform)
         self.val_transform = wrap_in_compose_is_list(val_transform)
         self.test_transform = wrap_in_compose_is_list(test_transform)
@@ -65,6 +65,7 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
                 split="train",
                 data_root=self.data_root,
                 transform=self.train_transform,
+                bands=self.bands,
                 use_full_data=self.use_full_data,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
@@ -75,6 +76,7 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
                 split="val",
                 data_root=self.data_root,
                 transform=self.val_transform,
+                bands=self.bands,
                 use_full_data=self.use_full_data,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
@@ -85,6 +87,7 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
                 split="val",
                 data_root=self.data_root,
                 transform=self.test_transform,
+                bands=self.bands,
                 use_full_data=self.use_full_data,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
