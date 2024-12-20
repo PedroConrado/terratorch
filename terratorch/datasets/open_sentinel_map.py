@@ -12,11 +12,12 @@ import torch.nn.functional as F  # noqa: N812
 from matplotlib.figure import Figure
 from PIL import Image
 from torch import Tensor
+
+from terratorch.datasets.utils import default_transform, pad_numpy
 from torchgeo.datasets import NonGeoDataset
 
-from terratorch.datasets.utils import pad_numpy, to_tensor
-
 MAX_TEMPORAL_IMAGE_SIZE = (192, 192)
+
 
 class OpenSentinelMap(NonGeoDataset):
     def __init__(
@@ -25,73 +26,56 @@ class OpenSentinelMap(NonGeoDataset):
         split: str = "train",
         bands: list[str] | None = None,
         transform: A.Compose | None = None,
-        spatial_interpolate_and_stack_temporally: bool = True,  # noqa: FBT001, FBT002
+        spatial_interpolate_and_stack_temporally: bool = True,
         pad_image: int | None = None,
         truncate_image: int | None = None,
-        target: int = 0,
-        pick_random_pair: bool = True,  # noqa: FBT002, FBT001
     ) -> None:
         """
-        Pytorch Dataset class to load samples from the OpenSentinelMap dataset, supporting
-        multiple bands and temporal sampling strategies.
 
         Args:
-            data_root (str): Path to the root directory of the dataset.
-            split (str): Dataset split to load. Options are 'train', 'val', or 'test'. Defaults to 'train'.
-            bands (list of str, optional): List of band names to load. Defaults to ['gsd_10', 'gsd_20', 'gsd_60'].
-            transform (albumentations.Compose, optional): Albumentations transformations to apply to the data.
-            spatial_interpolate_and_stack_temporally (bool): If True, the bands are interpolated and concatenated over time.
-                Default is True.
-            pad_image (int, optional): Number of timesteps to pad the time dimension of the image.
-                If None, no padding is applied.
-            truncate_image (int, optional): Number of timesteps to truncate the time dimension of the image.
-                If None, no truncation is performed.
-            target (int): Specifies which target class to use from the mask. Default is 0.
-            pick_random_pair (bool): If True, selects two random images from the temporal sequence. Default is True.
+            data_root (str): Path to dataset root.
+            split (str): 'train', 'val', or 'test'.
+            bands (list[str], optional): Bands to load. Default: ['gsd_10', 'gsd_20', 'gsd_60'].
+            transform (A.Compose, optional): Transformations to apply.
+            spatial_interpolate_and_stack_temporally (bool): If True, interpolate all bands to same resolution and return a single array.
+            pad_image (int, optional): Temporal padding.
+            truncate_image (int, optional): Temporal truncation.
         """
-        split = "test"
         if bands is None:
             bands = ["gsd_10", "gsd_20", "gsd_60"]
 
         allowed_bands = {"gsd_10", "gsd_20", "gsd_60"}
         for band in bands:
             if band not in allowed_bands:
-                msg = f"Band '{band}' is not recognized. Available values are: {', '.join(allowed_bands)}"
+                msg = f"Band '{band}' not recognized. Available: {', '.join(allowed_bands)}"
                 raise ValueError(msg)
 
         if split not in ["train", "val", "test"]:
-            msg = f"Split '{split}' not recognized. Use 'train', 'val', or 'test'."
+            msg = f"Split '{split}' not recognized."
             raise ValueError(msg)
 
         self.data_root = Path(data_root)
         split_mapping = {"train": "training", "val": "validation", "test": "testing"}
-        split = split_mapping[split]
+        split_folder = split_mapping[split]
         self.imagery_root = self.data_root / "osm_sentinel_imagery"
         self.label_root = self.data_root / "osm_label_images_v10"
         self.auxiliary_data = pd.read_csv(self.data_root / "spatial_cell_info.csv")
-        self.auxiliary_data = self.auxiliary_data[self.auxiliary_data["split"] == split]
+        self.auxiliary_data = self.auxiliary_data[self.auxiliary_data["split"] == split_folder]
         self.bands = bands
-        self.transform = transform if transform else lambda **batch: to_tensor(batch)
+        self.transform = transform if transform else default_transform
         self.label_mappings = self._load_label_mappings()
-        self.split_data = self.auxiliary_data[self.auxiliary_data["split"] == split]
+        self.split_data = self.auxiliary_data[self.auxiliary_data["split"] == split_folder]
         self.spatial_interpolate_and_stack_temporally = spatial_interpolate_and_stack_temporally
         self.pad_image = pad_image
         self.truncate_image = truncate_image
-        self.target = target
-        self.pick_random_pair = pick_random_pair
 
-        self.image_files = []
-        self.label_files = []
-
+        self.samples = []
         for _, row in self.split_data.iterrows():
             mgrs_tile = row["MGRS_tile"]
             spatial_cell = str(row["cell_id"])
-
             label_file = self.label_root / mgrs_tile / f"{spatial_cell}.png"
-
             if label_file.exists():
-                self.image_files.append((mgrs_tile, spatial_cell))
-                self.label_files.append(label_file)
+                self.samples.append((mgrs_tile, spatial_cell))
 
     def _load_label_mappings(self):
         with open(self.data_root / "osm_categories.json") as f:
@@ -106,123 +90,119 @@ class OpenSentinelMap(NonGeoDataset):
             raise ValueError(msg)
 
     def __len__(self) -> int:
-        return len(self.image_files)
-
-    def plot(self, sample: dict[str, Tensor], suptitle: str | None = None) -> Figure:
-        if "gsd_10" not in self.bands:
-            return None
-
-        num_images = len([key for key in sample if key.startswith("image")])
-        images = []
-
-        for i in range(1, num_images + 1):
-            image_dict = sample[f"image{i}"]
-            image = image_dict["gsd_10"]
-            if isinstance(image, Tensor):
-                image = image.numpy()
-
-            image = image.take(range(3), axis=2)
-            image = image.squeeze()
-            image = (image - image.min(axis=(0, 1))) * (1 / image.max(axis=(0, 1)))
-            image = np.clip(image, 0, 1)
-            images.append(image)
-
-        label_mask = sample["mask"]
-        if isinstance(label_mask, Tensor):
-            label_mask = label_mask.numpy()
-
-        return self._plot_sample(images, label_mask, suptitle=suptitle)
-
-
-    def _plot_sample(
-        self, images: list[np.ndarray],
-        label: np.ndarray,
-        suptitle: str | None = None,
-    ) -> Figure:
-        num_images = len(images)
-        fig, ax = plt.subplots(1, num_images + 1, figsize=(15, 5))
-
-        for i, image in enumerate(images):
-            ax[i].imshow(image)
-            ax[i].set_title(f"Image {i + 1}")
-            ax[i].axis("off")
-
-        ax[-1].imshow(label, cmap="gray")
-        ax[-1].set_title("Ground Truth Mask")
-        ax[-1].axis("off")
-
-        if suptitle:
-            plt.suptitle(suptitle)
-
-        return fig
+        return len(self.samples)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
-        mgrs_tile, spatial_cell = self.image_files[index]
+        mgrs_tile, spatial_cell = self.samples[index]
         spatial_cell_path = self.imagery_root / mgrs_tile / spatial_cell
 
         npz_files = list(spatial_cell_path.glob("*.npz"))
         npz_files.sort(key=lambda x: self._extract_date_from_filename(x.stem))
 
-        if self.pick_random_pair:
-            npz_files = random.sample(npz_files, 2)
-            npz_files.sort(key=lambda x: self._extract_date_from_filename(x.stem))
-
-        output = {}
-
         if self.spatial_interpolate_and_stack_temporally:
             images_over_time = []
-            for _, npz_file in enumerate(npz_files):
+            for npz_file in npz_files:
                 data = np.load(npz_file)
                 interpolated_bands = []
                 for band in self.bands:
-                    band_frame = data[band]
-                    band_frame = torch.from_numpy(band_frame).float()
-                    band_frame = band_frame.permute(2, 0, 1)
+                    band_frame = data[band].astype(np.float32)  # [H, W, C]
+                    band_frame = torch.from_numpy(band_frame).permute(2, 0, 1)  # [C, H, W]
                     interpolated = F.interpolate(
-                        band_frame.unsqueeze(0), size=MAX_TEMPORAL_IMAGE_SIZE, mode="bilinear", align_corners=False
-                    ).squeeze(0)
+                        band_frame.unsqueeze(0),
+                        size=MAX_TEMPORAL_IMAGE_SIZE,
+                        mode="bilinear",
+                        align_corners=False
+                    ).squeeze(0)  # [C, H, W]
                     interpolated_bands.append(interpolated)
-                concatenated_bands = torch.cat(interpolated_bands, dim=0)
+                concatenated_bands = torch.cat(interpolated_bands, dim=0)  # [C, H, W]
                 images_over_time.append(concatenated_bands)
 
-            images = torch.stack(images_over_time, dim=0).numpy()
+            images = torch.stack(images_over_time, dim=0).numpy()  # [T, C, H, W]
+
             if self.truncate_image:
                 images = images[-self.truncate_image:]
             if self.pad_image:
                 images = pad_numpy(images, self.pad_image)
 
-            output["image"] = images.transpose(0, 2, 3, 1)
+            images = images.transpose(0, 2, 3, 1)  # [T,H,W,C]
+            output = {"image": images}
+
         else:
             image_dict = {band: [] for band in self.bands}
-            for _, npz_file in enumerate(npz_files):
+            for npz_file in npz_files:
                 data = np.load(npz_file)
                 for band in self.bands:
-                    band_frames = data[band]
-                    band_frames = band_frames.astype(np.float32)
-                    band_frames = np.transpose(band_frames, (2, 0, 1))
+                    band_frames = data[band].astype(np.float32)  # [H, W, C]
+                    band_frames = np.transpose(band_frames, (2, 0, 1))  # [C,H,W]
                     image_dict[band].append(band_frames)
 
+            # Truncate/Padding
             final_image_dict = {}
             for band in self.bands:
-                band_images = image_dict[band]
+                band_images = image_dict[band]  # list of [C,H,W]
+                band_images = np.stack(band_images, axis=0)  # [T,C,H,W]
                 if self.truncate_image:
                     band_images = band_images[-self.truncate_image:]
                 if self.pad_image:
-                    band_images = [pad_numpy(img, self.pad_image) for img in band_images]
-                band_images = np.stack(band_images, axis=0)
+                    band_images = pad_numpy(band_images, self.pad_image)
                 final_image_dict[band] = band_images
 
-            output["image"] = final_image_dict
+            output = {"image": final_image_dict}
 
-        label_file = self.label_files[index]
-        mask = np.array(Image.open(label_file)).astype(int)
-
-        # Map 'unlabel' (254) and 'none' (255) to unused classes 15 and 16 for processing
-        mask[mask == 254] = 15  # noqa: PLR2004
-        mask[mask == 255] = 16  # noqa: PLR2004
-        output["mask"] = mask[:, :, self.target]
-
+        # Loads MASK
+        label_file = self.label_root / mgrs_tile / f"{spatial_cell}.png"
+        mask = np.array(Image.open(label_file)).astype(int)  # [H,W]
+        # Ignore UNALABEL/NONE.
+        output["mask"] = mask  # [H,W]
         if self.transform:
             output = self.transform(**output)
 
         return output
+
+    def plot(self, sample: dict[str, Tensor], suptitle: str | None = None) -> Figure:
+        image = sample["image"]
+        mask = sample["mask"]
+
+        if mask.ndim == 3 and mask.shape[0] == 1:
+            mask = mask.squeeze(0)
+
+        if isinstance(image, dict):
+            if "gsd_10" in image:
+                img_tensor = image["gsd_10"]
+            else:
+                first_band = next(iter(image.keys()))
+                img_tensor = image[first_band]
+
+            img_tensor = img_tensor.cpu().numpy()
+        else:
+            img_tensor = image.cpu().numpy()
+
+        C, T, H, W = img_tensor.shape
+
+        fig, axes = plt.subplots(1, T+1, figsize=(4*(T+1), 4))
+        if T+1 == 1:
+            axes = [axes]
+
+        for i in range(T):
+            frame = img_tensor[:,i, :, :]  # [C,H,W]
+            channels = min(C, 3)
+            frame_rgb = frame[:channels]  # [channels,H,W]
+            frame_rgb_min = frame_rgb.min()
+            frame_rgb_max = frame_rgb.max()
+            if frame_rgb_max > frame_rgb_min:
+                frame_rgb = (frame_rgb - frame_rgb_min) / (frame_rgb_max - frame_rgb_min)
+            frame_rgb = np.transpose(frame_rgb, (1, 2, 0))  # [H,W,C]
+            axes[i].imshow(frame_rgb)
+            axes[i].set_title(f"Frame {i+1}")
+            axes[i].axis("off")
+
+        mask_np = mask.cpu().numpy()
+        axes[-1].imshow(mask_np, cmap="gray")
+        axes[-1].set_title("Mask")
+        axes[-1].axis("off")
+
+        if suptitle is not None:
+            plt.suptitle(suptitle)
+
+        plt.tight_layout()
+        return fig

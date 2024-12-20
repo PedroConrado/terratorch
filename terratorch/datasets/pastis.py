@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 from torchgeo.datasets import NonGeoDataset
 
-from terratorch.datasets.utils import pad_dates_numpy, pad_numpy
+from terratorch.datasets.utils import pad_dates_numpy, pad_numpy, default_transform
 
 
 class PASTIS(NonGeoDataset):
@@ -93,7 +93,7 @@ class PASTIS(NonGeoDataset):
         )
         self.target = target
         self.satellites = satellites
-        self.transform = transform
+        self.transform = transform if transform else default_transform
         self.truncate_image = truncate_image
         self.pad_image = pad_image
         # loads patches metadata
@@ -240,7 +240,7 @@ class PASTIS(NonGeoDataset):
 
             dates[satellite] = torch.from_numpy(date)
 
-        output["image"] = satellites["S2"].transpose(0, 2, 3, 1)
+        output["image"] = satellites["S2"].transpose(1, 2, 3, 0) # T H W C
         output["mask"] = target
 
         if self.transform:
@@ -254,19 +254,20 @@ class PASTIS(NonGeoDataset):
 
     def plot(self, sample, suptitle=None):
         dates = sample["dates"]
-        target = sample["target"]
+        target = sample["mask"]
 
         if "S2" not in sample:
             warnings.warn("No RGB image.", stacklevel=2)
             return None
 
-        image_data = sample["S2"]
+        image_data = sample["image"]
         date_data = dates["S2"]
 
+        if torch.is_tensor(image_data):
+            image_data = image_data.numpy()
         rgb_images = []
-        for i in range(image_data.shape[0]):
-            rgb_image = image_data[i, :3, :, :].numpy().transpose(1, 2, 0)
-
+        for i in range(image_data.shape[1]):
+            rgb_image = image_data[[2,1,0], i, :, :].transpose(1, 2, 0)
             rgb_min = rgb_image.min(axis=(0, 1), keepdims=True)
             rgb_max = rgb_image.max(axis=(0, 1), keepdims=True)
             denom = rgb_max - rgb_min
@@ -303,7 +304,7 @@ class PASTIS(NonGeoDataset):
                 target_ax = fig.gca()
 
             target_ax.imshow(target.numpy(), cmap="tab20")
-            target_ax.set_title("Target")
+            target_ax.set_title("Mask")
             target_ax.axis("off")
 
         for k in range(num_images + 1, rows * cols):
