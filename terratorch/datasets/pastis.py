@@ -27,6 +27,7 @@ class PASTIS(NonGeoDataset):
         truncate_image = None,
         pad_image = None,
         satellites=["S2"],  # noqa: B006
+        use_dates = True
     ):
         """
         Pytorch Dataset class to load samples from the PASTIS dataset, for semantic and
@@ -157,6 +158,8 @@ class PASTIS(NonGeoDataset):
         else:
             self.norm = None
 
+        self.use_dates = use_dates
+
     def __len__(self):
         return self.len
 
@@ -242,18 +245,18 @@ class PASTIS(NonGeoDataset):
 
         output["image"] = satellites["S2"].transpose(1, 2, 3, 0) # T H W C
         output["mask"] = target
+        if self.use_dates:
+            output["batch_positions"] = dates["S2"]
 
         if self.transform:
             output = self.transform(**output)
-
-        output.update(satellites)
-        output["dates"] = dates
+            output["image"] = output["image"].permute(1, 0, 2, 3)
+        output["mask"] = output["mask"].long()
 
         return output
 
 
     def plot(self, sample, suptitle=None):
-        dates = sample["dates"]
         target = sample["mask"]
 
         if "S2" not in sample:
@@ -261,7 +264,6 @@ class PASTIS(NonGeoDataset):
             return None
 
         image_data = sample["image"]
-        date_data = dates["S2"]
 
         if torch.is_tensor(image_data):
             image_data = image_data.numpy()
@@ -276,12 +278,11 @@ class PASTIS(NonGeoDataset):
 
             rgb_images.append(np.clip(rgb_image, 0, 1))
 
-        return self._plot_sample(rgb_images, date_data, target, suptitle=suptitle)
+        return self._plot_sample(rgb_images, target, suptitle=suptitle)
 
     def _plot_sample(
         self,
         images: list[np.ndarray],
-        dates: torch.Tensor,
         target: torch.Tensor | None,
         suptitle: str | None = None
     ):
@@ -293,7 +294,7 @@ class PASTIS(NonGeoDataset):
 
         for i, image in enumerate(images):
             ax[i // cols, i % cols].imshow(image)
-            ax[i // cols, i % cols].set_title(f"Image {i + 1} - Day {dates[i].item()}")
+            ax[i // cols, i % cols].set_title(f"Image {i + 1}")
             ax[i // cols, i % cols].axis("off")
 
         if target is not None:

@@ -67,6 +67,7 @@ class Normalize(Callable):
         return batch
 
 
+
 class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
     """
     This is a generic datamodule class for instantiating data modules at runtime.

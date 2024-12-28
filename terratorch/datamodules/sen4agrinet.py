@@ -21,7 +21,6 @@ class Sen4AgriNetDataModule(NonGeoDataModule):
         scenario: str = "random",
         requires_norm: bool = True,
         binary_labels: bool = False,
-        linear_encoder: dict = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -37,9 +36,9 @@ class Sen4AgriNetDataModule(NonGeoDataModule):
         self.test_transform = wrap_in_compose_is_list(test_transform)
         self.data_root = data_root
         self.scenario = scenario
+        self.aug = lambda x: x
         self.requires_norm = requires_norm
         self.binary_labels = binary_labels
-        self.linear_encoder = linear_encoder
         self.kwargs = kwargs
 
     def setup(self, stage: str) -> None:
@@ -53,7 +52,6 @@ class Sen4AgriNetDataModule(NonGeoDataModule):
                 scenario=self.scenario,
                 requires_norm=self.requires_norm,
                 binary_labels=self.binary_labels,
-                linear_encoder=self.linear_encoder,
                 **self.kwargs,
             )
         if stage in ["fit", "validate"]:
@@ -66,7 +64,6 @@ class Sen4AgriNetDataModule(NonGeoDataModule):
                 scenario=self.scenario,
                 requires_norm=self.requires_norm,
                 binary_labels=self.binary_labels,
-                linear_encoder=self.linear_encoder,
                 **self.kwargs,
             )
         if stage in ["test"]:
@@ -79,6 +76,5 @@ class Sen4AgriNetDataModule(NonGeoDataModule):
                 scenario=self.scenario,
                 requires_norm=self.requires_norm,
                 binary_labels=self.binary_labels,
-                linear_encoder=self.linear_encoder,
                 **self.kwargs,
             )

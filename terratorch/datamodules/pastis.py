@@ -1,10 +1,11 @@
 from typing import Any
 
 import albumentations as A  # noqa: N812
-from torchgeo.datamodules import NonGeoDataModule
 
 from terratorch.datamodules.utils import wrap_in_compose_is_list
 from terratorch.datasets import PASTIS
+from torchgeo.datamodules import NonGeoDataModule
+
 
 
 class PASTISDataModule(NonGeoDataModule):
@@ -18,6 +19,7 @@ class PASTISDataModule(NonGeoDataModule):
         train_transform: A.Compose | None | list[A.BasicTransform] = None,
         val_transform: A.Compose | None | list[A.BasicTransform] = None,
         test_transform: A.Compose | None | list[A.BasicTransform] = None,
+        use_dates: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -26,11 +28,14 @@ class PASTISDataModule(NonGeoDataModule):
             num_workers=num_workers,
             **kwargs,
         )
+
         self.truncate_image = truncate_image
         self.pad_image = pad_image
+        self.aug = lambda x: x
         self.train_transform = wrap_in_compose_is_list(train_transform)
         self.val_transform = wrap_in_compose_is_list(val_transform)
         self.test_transform = wrap_in_compose_is_list(test_transform)
+        self.use_dates = use_dates
         self.data_root = data_root
         self.kwargs = kwargs
 
@@ -42,6 +47,7 @@ class PASTISDataModule(NonGeoDataModule):
                 transform=self.train_transform,
                 truncate_image=self.truncate_image,
                 pad_image=self.pad_image,
+                use_dates=self.use_dates,
                 **self.kwargs,
             )
         if stage in ["fit", "validate"]:
@@ -51,6 +57,7 @@ class PASTISDataModule(NonGeoDataModule):
                 transform=self.val_transform,
                 truncate_image=self.truncate_image,
                 pad_image=self.pad_image,
+                use_dates=self.use_dates,
                 **self.kwargs,
             )
         if stage in ["test"]:
@@ -60,5 +67,6 @@ class PASTISDataModule(NonGeoDataModule):
                 transform=self.test_transform,
                 truncate_image=self.truncate_image,
                 pad_image=self.pad_image,
+                use_dates=self.use_dates,
                 **self.kwargs,
             )

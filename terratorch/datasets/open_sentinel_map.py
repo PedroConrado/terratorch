@@ -20,6 +20,10 @@ MAX_TEMPORAL_IMAGE_SIZE = (192, 192)
 
 
 class OpenSentinelMap(NonGeoDataset):
+
+    all_bands_names = ["gsd_10", "gsd_20", "gsd_60"]
+    splits = ["train", "val", "test"]
+
     def __init__(
         self,
         data_root: str,
@@ -28,7 +32,9 @@ class OpenSentinelMap(NonGeoDataset):
         transform: A.Compose | None = None,
         spatial_interpolate_and_stack_temporally: bool = True,
         pad_image: int | None = None,
+        pick_random_pair: bool = True,
         truncate_image: int | None = None,
+        target = 0
     ) -> None:
         """
 
@@ -42,15 +48,14 @@ class OpenSentinelMap(NonGeoDataset):
             truncate_image (int, optional): Temporal truncation.
         """
         if bands is None:
-            bands = ["gsd_10", "gsd_20", "gsd_60"]
+            bands = self.all_bands_names
 
-        allowed_bands = {"gsd_10", "gsd_20", "gsd_60"}
         for band in bands:
-            if band not in allowed_bands:
-                msg = f"Band '{band}' not recognized. Available: {', '.join(allowed_bands)}"
+            if band not in self.all_bands_names:
+                msg = f"Band '{band}' not recognized. Available: {', '.join(self.all_bands_names)}"
                 raise ValueError(msg)
 
-        if split not in ["train", "val", "test"]:
+        if split not in self.splits:
             msg = f"Split '{split}' not recognized."
             raise ValueError(msg)
 
@@ -68,6 +73,8 @@ class OpenSentinelMap(NonGeoDataset):
         self.spatial_interpolate_and_stack_temporally = spatial_interpolate_and_stack_temporally
         self.pad_image = pad_image
         self.truncate_image = truncate_image
+        self.pick_random_pair = pick_random_pair
+        self.target = target
 
         self.samples = []
         for _, row in self.split_data.iterrows():
@@ -98,6 +105,8 @@ class OpenSentinelMap(NonGeoDataset):
 
         npz_files = list(spatial_cell_path.glob("*.npz"))
         npz_files.sort(key=lambda x: self._extract_date_from_filename(x.stem))
+        if self.pick_random_pair:
+            npz_files = random.sample(npz_files, 2)
 
         if self.spatial_interpolate_and_stack_temporally:
             images_over_time = []
@@ -145,18 +154,20 @@ class OpenSentinelMap(NonGeoDataset):
                     band_images = band_images[-self.truncate_image:]
                 if self.pad_image:
                     band_images = pad_numpy(band_images, self.pad_image)
+                T, C, H, W = band_images.shape
+                band_images = band_images.reshape(T * C, H, W)
                 final_image_dict[band] = band_images
 
             output = {"image": final_image_dict}
 
         # Loads MASK
         label_file = self.label_root / mgrs_tile / f"{spatial_cell}.png"
-        mask = np.array(Image.open(label_file)).astype(int)  # [H,W]
-        # Ignore UNALABEL/NONE.
-        output["mask"] = mask  # [H,W]
+        mask = np.array(Image.open(label_file)).astype(int)
+        mask[(mask == 255) | (mask == 254)] = -1
+        output["mask"] = mask[:,:,self.target]
         if self.transform:
             output = self.transform(**output)
-
+        output["mask"] = output["mask"].long()
         return output
 
     def plot(self, sample: dict[str, Tensor], suptitle: str | None = None) -> Figure:
