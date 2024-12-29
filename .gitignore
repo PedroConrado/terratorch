@@ -20,3 +20,5 @@ examples/**/*tif*
 *.stdout
 *.log
 **/*.un~
+.DS_Store
+.idea/*

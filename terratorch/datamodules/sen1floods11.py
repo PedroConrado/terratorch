@@ -14,35 +14,35 @@ from terratorch.datamodules.utils import wrap_in_compose_is_list
 from terratorch.datasets import Sen1Floods11NonGeo
 
 MEANS = {
-    "COASTAL_AEROSOL": 0.16450718,
-    "BLUE": 0.1412956,
-    "GREEN": 0.13795798,
-    "RED": 0.12353792,
-    "RED_EDGE_1": 0.1481099,
-    "RED_EDGE_2": 0.23991728,
-    "RED_EDGE_3": 0.28587557,
-    "NIR_BROAD": 0.26345379,
-    "NIR_NARROW": 0.30902815,
-    "WATER_VAPOR": 0.04911151,
-    "CIRRUS": 0.00652506,
-    "SWIR_1": 0.2044958,
-    "SWIR_2": 0.11912015,
+    "COASTAL_AEROSOL": 0.1626915961,
+    "BLUE": 0.1396034671,
+    "GREEN": 0.1364061150,
+    "RED": 0.1218228449,
+    "RED_EDGE_1": 0.1466072870,
+    "RED_EDGE_2": 0.2386902915,
+    "RED_EDGE_3": 0.2845612491,
+    "NIR_BROAD": 0.2622957903,
+    "NIR_NARROW": 0.3077482137,
+    "WATER_VAPOR": 0.0486874356,
+    "CIRRUS": 0.0063778608,
+    "SWIR_1": 0.2030647579,
+    "SWIR_2": 0.1179166043,
 }
 
 STDS = {
-    "COASTAL_AEROSOL": 0.06977374,
-    "BLUE": 0.07406382,
-    "GREEN": 0.07370365,
-    "RED": 0.08692279,
-    "RED_EDGE_1": 0.07778555,
-    "RED_EDGE_2": 0.09105416,
-    "RED_EDGE_3": 0.10690993,
-    "NIR_BROAD": 0.10096586,
-    "NIR_NARROW": 0.11798815,
-    "WATER_VAPOR": 0.03380113,
-    "CIRRUS": 0.01463465,
-    "SWIR_1": 0.09772074,
-    "SWIR_2": 0.07659938,
+    "COASTAL_AEROSOL": 0.0700171321,
+    "BLUE": 0.0739094508,
+    "GREEN": 0.0735248220,
+    "RED": 0.0864936673,
+    "RED_EDGE_1": 0.0776880316,
+    "RED_EDGE_2": 0.0921368320,
+    "RED_EDGE_3": 0.1084373434,
+    "NIR_BROAD": 0.1022634154,
+    "NIR_NARROW": 0.1196442523,
+    "WATER_VAPOR": 0.0336611046,
+    "CIRRUS": 0.0143999229,
+    "SWIR_1": 0.0980870589,
+    "SWIR_2": 0.0764608346,
 }
 
 
@@ -68,13 +68,13 @@ class Sen1Floods11NonGeoDataModule(NonGeoDataModule):
         super().__init__(Sen1Floods11NonGeo, batch_size, num_workers, **kwargs)
         self.data_root = data_root
 
-        means = [MEANS[b] for b in bands]
-        stds = [STDS[b] for b in bands]
+        self.means = [MEANS[b] for b in bands]
+        self.stds = [STDS[b] for b in bands]
         self.bands = bands
         self.train_transform = wrap_in_compose_is_list(train_transform)
         self.val_transform = wrap_in_compose_is_list(val_transform)
         self.test_transform = wrap_in_compose_is_list(test_transform)
-        self.aug = AugmentationSequential(K.Normalize(means, stds), data_keys=["image"])
+        self.aug = AugmentationSequential(K.Normalize(self.means, self.stds), data_keys=["image"])
         self.drop_last = drop_last
         self.constant_scale = constant_scale
         self.no_data_replace = no_data_replace
