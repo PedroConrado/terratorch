@@ -13,6 +13,15 @@ from torchgeo.datasets import NonGeoDataset
 from terratorch.datasets.utils import pad_dates_numpy, pad_numpy, default_transform
 
 
+def load_cloudy_index(index_path):
+    """
+    Carrega o índice de timesteps nublados a partir de um arquivo JSON.
+    """
+    if not os.path.exists(index_path):
+        raise FileNotFoundError(f"Arquivo de índice de nuvens não encontrado: {index_path}")
+    with open(index_path, "r") as file:
+        return json.load(file)
+
 class PASTIS(NonGeoDataset):
     def __init__(
         self,
@@ -27,7 +36,11 @@ class PASTIS(NonGeoDataset):
         truncate_image = None,
         pad_image = None,
         satellites=["S2"],  # noqa: B006
-        use_dates = True
+        use_dates = True,
+        utae = False,
+        use_resampled=False,
+        remove_cloudy_timesteps=False,
+        training=True,
     ):
         """
         Pytorch Dataset class to load samples from the PASTIS dataset, for semantic and
@@ -85,6 +98,19 @@ class PASTIS(NonGeoDataset):
 
         super().__init__()
         self.data_root = data_root
+        self.use_resampled = use_resampled
+        self.data_dir = os.path.join(
+            data_root, "DATA_S2_monthly_aggregated" if use_resampled else "DATA_S2"
+        )
+        metadata_file = os.path.join(
+            data_root, "metadata_monthly_aggregated.geojson" if use_resampled else "metadata.geojson"
+        )
+        self.remove_cloudy_timesteps = remove_cloudy_timesteps
+        self.cloudy_index_path = os.path.join(data_root, "cloudy_frames_index.json")
+        if self.remove_cloudy_timesteps:
+            self.cloudy_index = load_cloudy_index(self.cloudy_index_path)
+        else:
+            self.cloudy_index = None
         self.norm = norm
         self.reference_date = datetime(*map(int, reference_date.split("-")), tzinfo=timezone.utc)
         self.class_mapping = (
@@ -97,8 +123,10 @@ class PASTIS(NonGeoDataset):
         self.transform = transform if transform else default_transform
         self.truncate_image = truncate_image
         self.pad_image = pad_image
+        self.utae = utae
+        self.training = training
         # loads patches metadata
-        self.meta_patch = gpd.read_file(os.path.join(data_root, "metadata.geojson"))
+        self.meta_patch = gpd.read_file(metadata_file)
         self.meta_patch.index = self.meta_patch["ID_PATCH"].astype(int)
         self.meta_patch.sort_index(inplace=True)
         # stores table for each satalite date
@@ -164,93 +192,82 @@ class PASTIS(NonGeoDataset):
         return self.len
 
     def get_dates(self, id_patch, sat):
-        return self.date_range[np.where(self.date_tables[sat][id_patch] == 1)[0]]
+        if self.use_resampled:
+            return np.array(list(self.meta_patch.loc[id_patch, f"dates-{sat}"].values()))
+        else:
+            return self.date_range[np.where(self.date_tables[sat][id_patch] == 1)[0]]
 
     def __getitem__(self, item):
         id_patch = self.id_patches[item]
         output = {}
         satellites = {}
+        dates = {}
         for satellite in self.satellites:
             data = np.load(
-                os.path.join(
-                    self.data_root,
-                    f"DATA_{satellite}",
-                    f"{satellite}_{id_patch}.npy",
-                )
+                os.path.join(self.data_dir, f"{satellite}_{id_patch}.npy")
             ).astype(np.float32)
 
             if self.norm is not None:
                     data = data - self.norm[satellite][0][None, :, None, None]
                     data = data / self.norm[satellite][1][None, :, None, None]
 
+            date = np.array(self.get_dates(id_patch, satellite))
+            if self.remove_cloudy_timesteps and str(f"{satellite}_{id_patch}.npy") in self.cloudy_index:
+                cloudy_indices = np.array(self.cloudy_index[f"{satellite}_{id_patch}.npy"])
+                if len(cloudy_indices) > 0:
+                    mask = np.ones(data.shape[0], dtype=bool)
+                    mask[cloudy_indices] = False
+                    data = data[mask]
+                    date = date[mask]
+
+            if data.shape[0] == 0:
+                msg = f"All timesteps removed for {id_patch}"
+                raise ValueError(msg)
+
             if self.truncate_image and data.shape[0] > self.truncate_image:
-                data = data[-self.truncate_image:]
+                if self.training:
+                    bins = np.linspace(0, data.shape[0], self.truncate_image + 1, endpoint=True).astype(int)
+                    indices = []
+                    for i in range(self.truncate_image):
+                        start = bins[i]
+                        end = bins[i+1]
+                        if start < end:
+                            idx = np.random.randint(start, end)
+                        else:
+                            idx = start
+                        indices.append(idx)
+                    indices = np.array(indices)
+                else:
+                    indices = np.linspace(0, data.shape[0] - 1, self.truncate_image, dtype=int)
+                data = data[indices]
+                date = date[indices]
 
             if self.pad_image and data.shape[0] < self.pad_image:
                 data = pad_numpy(data, self.pad_image)
-
-            satellites[satellite] = data.astype(np.float32)
-
-
-        if self.target == "semantic":
-            target = np.load(
-                os.path.join(self.data_root, "ANNOTATIONS", f"TARGET_{id_patch}.npy")
-            )
-            target = target[0].astype(int)
-            if self.class_mapping is not None:
-                target = self.class_mapping(target)
-        elif self.target == "instance":
-            heatmap = np.load(os.path.join(self.data_root, "INSTANCE_ANNOTATIONS", f"HEATMAP_{id_patch}.npy"))
-            instance_ids = np.load(os.path.join(self.data_root, "INSTANCE_ANNOTATIONS", f"INSTANCES_{id_patch}.npy"))
-            zones_path = os.path.join(self.data_root, "INSTANCE_ANNOTATIONS", f"ZONES_{id_patch}.npy")
-            pixel_to_object_mapping = np.load(zones_path)
-            pixel_semantic_annotation = np.load(os.path.join(self.data_root, "ANNOTATIONS", f"TARGET_{id_patch}.npy"))
-
-            if self.class_mapping is not None:
-                pixel_semantic_annotation = self.class_mapping(pixel_semantic_annotation[0])
-            else:
-                pixel_semantic_annotation = pixel_semantic_annotation[0]
-
-            size = np.zeros((*instance_ids.shape, 2))
-            object_semantic_annotation = np.zeros(instance_ids.shape)
-            for instance_id in np.unique(instance_ids):
-                if instance_id != 0:
-                    h = (instance_ids == instance_id).any(axis=-1).sum()
-                    w = (instance_ids == instance_id).any(axis=-2).sum()
-                    size[pixel_to_object_mapping == instance_id] = (h, w)
-                    semantic_value = pixel_semantic_annotation[instance_ids == instance_id][0]
-                    object_semantic_annotation[pixel_to_object_mapping == instance_id] = semantic_value
-
-            target = np.concatenate(
-                [
-                    heatmap[:, :, None],
-                    instance_ids[:, :, None],
-                    pixel_to_object_mapping[:, :, None],
-                    size,
-                    object_semantic_annotation[:, :, None],
-                    pixel_semantic_annotation[:, :, None],
-                ], axis=-1).astype(np.float32)
-
-        dates = {}
-        for satellite in self.satellites:
-            date = np.array(self.get_dates(id_patch, satellite))
-
-            if self.truncate_image and len(date) > self.truncate_image:
-                date = date[-self.truncate_image:]
-
-            if self.pad_image and len(date) < self.pad_image:
                 date = pad_dates_numpy(date, self.pad_image)
 
+            satellites[satellite] = data.astype(np.float32)
             dates[satellite] = torch.from_numpy(date)
 
-        output["image"] = satellites["S2"].transpose(1, 2, 3, 0) # T H W C
+        target = np.load(
+            os.path.join(self.data_root, "ANNOTATIONS", f"TARGET_{id_patch}.npy")
+        )
+        target = target[0].astype(int)
+        if self.class_mapping is not None:
+            target = self.class_mapping(target)
+
+        output["image"] = satellites["S2"].transpose(0, 2, 3, 1)
         output["mask"] = target
+        if self.transform:
+            output = self.transform(**output)
+            if not self.utae:
+                output["image"] = output["image"][[0, 1, 2, 7, 8, 9], :]
+            else:
+                output["image"] = output["image"].permute(1, 0, 2, 3)
+
         if self.use_dates:
             output["batch_positions"] = dates["S2"]
 
-        if self.transform:
-            output = self.transform(**output)
-            output["image"] = output["image"].permute(1, 0, 2, 3)
         output["mask"] = output["mask"].long()
 
         return output
@@ -258,10 +275,6 @@ class PASTIS(NonGeoDataset):
 
     def plot(self, sample, suptitle=None):
         target = sample["mask"]
-
-        if "S2" not in sample:
-            warnings.warn("No RGB image.", stacklevel=2)
-            return None
 
         image_data = sample["image"]
 
